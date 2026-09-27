@@ -2,6 +2,7 @@ name: Linux policy tests
 on: [push, pull_request]
 jobs:
   linux:
+    if: github.repository == 'ThatGuyMcd/DKR-R'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

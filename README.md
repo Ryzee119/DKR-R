@@ -107,15 +107,25 @@ select an adapter, exchange an address, import an invitation file or configure
 a UDP port. There is no DKR-R account, gameplay backend or relay. See
 [docs/ONLINE_MULTIPLAYER.md](docs/ONLINE_MULTIPLAYER.md).
 
+### PortMaster (R36XX / RK3326 Handhelds)
+
+1. Obtain a legally dumped **Diddy Kong Racing (USA) v1.0** ROM (`.z64`, `.v64`, or `.n64`).
+2. Copy `Diddy Kong Racing.sh` and the `dkrr/` folder from `dist/DiddyKongRacing-R36XX-PortMaster.zip` to `/roms/ports/` on your handheld's SD card.
+3. Place your ROM at `/roms/ports/dkrr/gamedata/dkr.z64`.
+4. Launch **Diddy Kong Racing** from the **Ports** menu in EmulationStation (ArkOS / AmberELEC / UnofficialOS).
+5. See [portmaster/dkrr/README.md](portmaster/dkrr/README.md) for full details on controls and tuning.
+
 ## Release files
 
 ```text
 dist/DKR-R-1.0.4-Windows-x64.zip
 dist/DKR-R-1.0.4-Linux-x86_64.AppImage
+dist/DiddyKongRacing-R36XX-PortMaster.zip
 ```
 
 The Linux release is always distributed as an AppImage. macOS is supported by
 the source/build kit and requires an Apple host for signing and final testing.
+Handheld RK3326 devices (R36S, R35S, RG351, RGB20S) use the PortMaster package.
 
 ## Building
 
@@ -131,6 +141,12 @@ The Linux build uses the already generated recompilation sources:
 ```bash
 ./Setup-Linux.sh
 ./Build-Linux.sh
+```
+
+For PortMaster / RK3326 handhelds (OpenGL ES 2.0/3.0):
+
+```bash
+./scripts/build-r36xx.sh
 ```
 
 Dependency revisions are pinned in `dependencies.lock.json`; all dependency

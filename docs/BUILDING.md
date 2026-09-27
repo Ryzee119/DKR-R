@@ -106,8 +106,50 @@ On an Apple host with Xcode command-line tools, CMake and Ninja:
 RT64 uses Metal on macOS. See `packaging/MACOS-BUILD-README.md` for the handoff
 and validation checklist.
 
+## PortMaster / R36XX (OpenGL ES 2.0 / 3.0)
+
+To cross-compile and package for RK3326-based handheld devices (R36S, R35S, RG351, RGB20S) on a Linux x86_64 host:
+
+```bash
+# 1. Install prerequisites:
+sudo apt-get install clang llvm lld binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu g++-aarch64-linux-gnu cmake ninja-build python3 zip
+
+# 2. Build the ARM64 release executable and package for PortMaster:
+./scripts/build-r36xx.sh
+```
+
+If the AArch64 sysroot is not present, `build-r36xx.sh` will automatically run `scripts/setup-aarch64-sysroot.sh` to construct one under `aarch64-sysroot-focal/`.
+
+### Automated AArch64 Sysroot & Compatibility
+
+PortMaster handhelds running ArkOS or AmberELEC use distributions based on Ubuntu 20.04 (Focal Fossa) with **GLIBC 2.31**. Compiling directly against a modern Linux host's newer GLIBC (e.g. 2.35 or 2.39) results in binaries that fail with `version 'GLIBC_2.3x' not found` errors on device.
+
+`scripts/setup-aarch64-sysroot.sh` creates a self-contained cross-compilation sysroot:
+- Downloads pinned Ubuntu 20.04 ARM64 packages (libc6 2.31, libdrm, EGL/GLESv2 development headers).
+- Pulls GCC 13 toolchain headers and static libraries (`libstdc++.a`, `libgcc.a`) from the Ubuntu Toolchain PPA for C++20 standard library support without requiring newer dynamic runtime libraries on device.
+- Compiles and installs SDL2 2.30.2 matching PortMaster's ABI.
+- Canonicalizes absolute symlinks to relative paths for hermetic linking under `--sysroot`.
+
+### Custom Sysroot Overrides
+
+You can point the build system to a custom sysroot location using environment variables:
+- `PORTMASTER_SYSROOT=/path/to/sysroot ./scripts/build-r36xx.sh`
+- Or via `DKR_AARCH64_SYSROOT=/path/to/sysroot`
+
+This compiles with `-DDKR_RUNTIME_BUILD_GLES=ON`, links the recompiled v1.0/v1.1 game code (or standalone GLES demo if ROM sources are omitted), bundles support libraries, and outputs:
+
+```text
+dist/DiddyKongRacing-R36XX-PortMaster.zip
+```
+
+To clean and rebuild from scratch:
+```bash
+./scripts/build-r36xx.sh --clean
+```
+
 ## Release safety
 
 Run `python scripts/scan_for_game_assets.py` before packaging. No ROM, save,
 Controller Pak, extracted asset, log, build cache or local configuration may be
 included. Release archives are scanned again by their packaging scripts.
+

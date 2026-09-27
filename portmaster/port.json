@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "name": "dkrr.zip",
+  "items": [
+    "Diddy Kong Racing.sh",
+    "dkrr"
+  ],
+  "items_opt": null,
+  "attr": {
+    "title": "Diddy Kong Racing Recompiled",
+    "desc": "Native port of Diddy Kong Racing (N64) for RK3326 / R36XX handhelds using OpenGL ES 2.0.",
+    "inst": "Place your legally obtained US Diddy Kong Racing ROM (dkr.z64) in ports/dkrr/gamedata/",
+    "genres": [
+      "Racing",
+      "Action"
+    ],
+    "porter": [
+      "Antigravity"
+    ],
+    "image": {
+      "screenshot": "screenshot.png",
+      "thumbnail": "icon.png"
+    },
+    "rtr": false,
+    "exp": false,
+    "runtime": null,
+    "reqs": [
+      "opengl_es"
+    ],
+    "arch": [
+      "aarch64",
+      "armhf"
+    ]
+  }
+}

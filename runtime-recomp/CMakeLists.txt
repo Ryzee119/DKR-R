@@ -44,6 +44,7 @@ include(CTest)
 set(DKRPORT_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." CACHE PATH "Root of the DKR Port repository")
 option(DKR_RUNTIME_BUILD_GENERATED "Compile N64Recomp-generated DKR CPU functions" ON)
 option(DKR_RUNTIME_BUILD_RT64 "Also configure and compile the pinned RT64 renderer" OFF)
+option(DKR_RUNTIME_BUILD_GLES "Build the embedded OpenGL ES 2.0/3.0 renderer for handhelds" OFF)
 option(DKR_LEGACY_QUALIFICATION "Build private real-runtime legacy scene qualification hooks (not for packaging)" OFF)
 set(DKR_PATCH_POLICY_V77
     "${CMAKE_CURRENT_LIST_DIR}/dkr.us.v77.recomp-policy.json")
@@ -507,6 +508,12 @@ if(DKR_RUNTIME_BUILD_GENERATED)
             "${DKR_RT64_SOURCE}/src/contrib/imgui/backends/imgui_impl_sdlrenderer2.cpp"
         )
     endif()
+    if(DKR_RUNTIME_BUILD_GLES)
+        list(APPEND DKR_GAME_SOURCES
+            src/game/gles_renderer.cpp
+            src/game/f3ddkr_gles.cpp
+        )
+    endif()
     if(WIN32)
         list(APPEND DKR_GAME_SOURCES
             resources/dkr-r.rc
@@ -534,6 +541,7 @@ if(DKR_RUNTIME_BUILD_GENERATED)
     )
     target_compile_definitions(DKRPortGame PRIVATE
         DKR_RUNTIME_HAS_RT64=$<BOOL:${DKR_RUNTIME_BUILD_RT64}>
+        DKR_RUNTIME_HAS_GLES=$<BOOL:${DKR_RUNTIME_BUILD_GLES}>
         DKR_LEGACY_QUALIFICATION=$<BOOL:${DKR_LEGACY_QUALIFICATION}>
         DKR_RUNTIME_HAS_SDL3_INPUT_HOST=$<BOOL:${DKR_RUNTIME_BUILD_SDL3_INPUT_HOST}>
         DKR_RELEASE_VERSION="${DKR_RELEASE_VERSION}"
@@ -560,6 +568,12 @@ if(DKR_RUNTIME_BUILD_GENERATED)
     target_link_libraries(DKRPortGame PRIVATE DKRNetplayCore)
     target_link_libraries(DKRPortGame PRIVATE DKRLegacyModLaunch DKRLegacyGuestIO)
     add_dependencies(DKRPortGame DKRLegacyModWorker)
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(DKRPortGame PRIVATE dl m pthread)
+    endif()
+    if(CMAKE_CROSSCOMPILING)
+        target_link_options(DKRPortGame PRIVATE "-Wl,--allow-shlib-undefined")
+    endif()
     if(MSVC)
         target_compile_options(DKRPortGame PRIVATE /FS)
     endif()
@@ -615,37 +629,61 @@ if(DKR_RUNTIME_BUILD_GENERATED)
                 VERBATIM
             )
         endif()
-        add_custom_command(TARGET DKRPortGame POST_BUILD
-            COMMAND "${CMAKE_COMMAND}" -E make_directory
-                "$<TARGET_FILE_DIR:DKRPortGame>/assets/ui/Icons"
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${CMAKE_CURRENT_LIST_DIR}/../assets/ui/Icons/DKR-R-Logo.bmp"
-                "$<TARGET_FILE_DIR:DKRPortGame>/assets/ui/Icons/DKR-R-Logo.bmp"
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${CMAKE_CURRENT_LIST_DIR}/../assets/ui/Icons/DKR-R-Spinning-Icon.png"
-                "$<TARGET_FILE_DIR:DKRPortGame>/assets/ui/Icons/DKR-R-Spinning-Icon.png"
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${CMAKE_CURRENT_LIST_DIR}/../assets/ui/Icons/DKR-R-Short-Logo.png"
-                "$<TARGET_FILE_DIR:DKRPortGame>/assets/ui/Icons/DKR-R-Short-Logo.png"
-            COMMAND "${CMAKE_COMMAND}" -E make_directory
-                "$<TARGET_FILE_DIR:DKRPortGame>/assets/ui/Backgrounds"
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${CMAKE_CURRENT_LIST_DIR}/../assets/ui/Backgrounds/DKR-R-Launcher-Background.png"
-                "$<TARGET_FILE_DIR:DKRPortGame>/assets/ui/Backgrounds/DKR-R-Launcher-Background.png"
-            COMMAND "${CMAKE_COMMAND}" -E make_directory
-                "$<TARGET_FILE_DIR:DKRPortGame>/assets/filters"
-            COMMAND "${CMAKE_COMMAND}" -E copy_directory
-                "${CMAKE_CURRENT_LIST_DIR}/../assets/filters"
-                "$<TARGET_FILE_DIR:DKRPortGame>/assets/filters"
-            COMMAND "${CMAKE_COMMAND}" -E make_directory
-                "$<TARGET_FILE_DIR:DKRPortGame>/assets/controllers"
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${CMAKE_CURRENT_LIST_DIR}/../assets/controllers/gamecontrollerdb.txt"
-                "$<TARGET_FILE_DIR:DKRPortGame>/assets/controllers/gamecontrollerdb.txt"
-            COMMENT "Staging the DKR-R launcher, graphics and controller assets"
-            VERBATIM
-        )
     endif()
+
+    if(DKR_RUNTIME_BUILD_GLES)
+        find_package(SDL2 CONFIG QUIET)
+        if(NOT SDL2_FOUND AND NOT SDL2_LIBRARIES)
+            find_path(SDL2_INCLUDE_DIRS SDL.h PATH_SUFFIXES SDL2)
+            find_library(SDL2_LIBRARIES NAMES SDL2 SDL2-2.0)
+            if(NOT SDL2_INCLUDE_DIRS OR NOT SDL2_LIBRARIES)
+                message(FATAL_ERROR "SDL2 not found for the GLES build (check the aarch64 sysroot).")
+            endif()
+        endif()
+        target_include_directories(DKRPortGame PRIVATE
+            ${SDL2_INCLUDE_DIRS}
+            "${DKRPORT_ROOT}/extern/n64-modern-runtime/thirdparty"
+        )
+        target_link_libraries(DKRPortGame PRIVATE ${SDL2_LIBRARIES})
+
+        find_library(GLESV2_LIBRARY NAMES GLESv2 GLESv3)
+        if(GLESV2_LIBRARY)
+            target_link_libraries(DKRPortGame PRIVATE ${GLESV2_LIBRARY})
+        else()
+            target_link_libraries(DKRPortGame PRIVATE GLESv2)
+        endif()
+    endif()
+
+    add_custom_command(TARGET DKRPortGame POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+            "$<TARGET_FILE_DIR:DKRPortGame>/assets/ui/Icons"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${CMAKE_CURRENT_LIST_DIR}/../assets/ui/Icons/DKR-R-Logo.bmp"
+            "$<TARGET_FILE_DIR:DKRPortGame>/assets/ui/Icons/DKR-R-Logo.bmp"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${CMAKE_CURRENT_LIST_DIR}/../assets/ui/Icons/DKR-R-Spinning-Icon.png"
+            "$<TARGET_FILE_DIR:DKRPortGame>/assets/ui/Icons/DKR-R-Spinning-Icon.png"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${CMAKE_CURRENT_LIST_DIR}/../assets/ui/Icons/DKR-R-Short-Logo.png"
+            "$<TARGET_FILE_DIR:DKRPortGame>/assets/ui/Icons/DKR-R-Short-Logo.png"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+            "$<TARGET_FILE_DIR:DKRPortGame>/assets/ui/Backgrounds"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${CMAKE_CURRENT_LIST_DIR}/../assets/ui/Backgrounds/DKR-R-Launcher-Background.png"
+            "$<TARGET_FILE_DIR:DKRPortGame>/assets/ui/Backgrounds/DKR-R-Launcher-Background.png"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+            "$<TARGET_FILE_DIR:DKRPortGame>/assets/filters"
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${CMAKE_CURRENT_LIST_DIR}/../assets/filters"
+            "$<TARGET_FILE_DIR:DKRPortGame>/assets/filters"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+            "$<TARGET_FILE_DIR:DKRPortGame>/assets/controllers"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${CMAKE_CURRENT_LIST_DIR}/../assets/controllers/gamecontrollerdb.txt"
+            "$<TARGET_FILE_DIR:DKRPortGame>/assets/controllers/gamecontrollerdb.txt"
+        COMMENT "Staging the DKR-R launcher, graphics and controller assets"
+        VERBATIM
+    )
     if(WIN32)
         target_link_libraries(DKRPortGame PRIVATE user32 shell32 dbghelp bcrypt dxgi)
     endif()
@@ -714,6 +752,92 @@ foreach(config Debug Release RelWithDebInfo MinSizeRel)
         RUNTIME_OUTPUT_DIRECTORY_${config_upper} "${CMAKE_BINARY_DIR}/bin/${config}"
     )
 endforeach()
+
+if(DKR_RUNTIME_BUILD_GLES)
+    find_package(SDL2 CONFIG QUIET)
+    if(NOT SDL2_FOUND AND NOT SDL2_LIBRARIES)
+        find_path(SDL2_INCLUDE_DIRS SDL.h PATH_SUFFIXES SDL2)
+        find_library(SDL2_LIBRARIES NAMES SDL2 SDL2-2.0)
+        if(NOT SDL2_INCLUDE_DIRS OR NOT SDL2_LIBRARIES)
+            message(FATAL_ERROR "SDL2 not found for the GLES build (check the aarch64 sysroot).")
+        endif()
+    endif()
+    find_library(GLESV2_LIBRARY NAMES GLESv2 GLESv3)
+    add_library(DKRGLESTestTarget STATIC
+        src/game/gles_renderer.cpp
+        src/game/f3ddkr_gles.cpp
+        src/game/runtime_platform.cpp
+    )
+    target_include_directories(DKRGLESTestTarget PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}/src/game"
+        "${DKR_RECOMP_SOURCE}/include"
+        "${DKR_MODERN_RUNTIME_SOURCE}/N64Recomp/include"
+        "${DKR_MODERN_RUNTIME_SOURCE}/ultramodern/include"
+        "${DKR_MODERN_RUNTIME_SOURCE}/librecomp/include"
+        "${DKR_MODERN_RUNTIME_SOURCE}/thirdparty"
+    )
+    target_compile_definitions(DKRGLESTestTarget PRIVATE
+        DKR_RUNTIME_HAS_RT64=0
+        DKR_RUNTIME_HAS_GLES=1
+        DKR_RUNTIME_HAS_SDL3_INPUT_HOST=0
+    )
+    if(SDL2_INCLUDE_DIRS)
+        target_include_directories(DKRGLESTestTarget PRIVATE ${SDL2_INCLUDE_DIRS})
+    endif()
+    if(NOT GLESV2_LIBRARY)
+        set(GLESV2_LIBRARY GLESv2)
+    endif()
+    target_link_libraries(DKRGLESTestTarget PRIVATE
+        ultramodern
+        librecomp
+        ${SDL2_LIBRARIES}
+        ${GLESV2_LIBRARY}
+    )
+
+    find_library(EGL_LIBRARY NAMES EGL)
+    add_executable(DKRGLESRunnerTest
+        tests/gles_runner_test.cpp
+    )
+    target_include_directories(DKRGLESRunnerTest PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}/src/game"
+        "${DKR_MODERN_RUNTIME_SOURCE}/ultramodern/include"
+        "${DKR_MODERN_RUNTIME_SOURCE}/librecomp/include"
+        "${DKR_MODERN_RUNTIME_SOURCE}/thirdparty"
+    )
+    target_link_libraries(DKRGLESRunnerTest PRIVATE
+        DKRGLESTestTarget
+        ${EGL_LIBRARY}
+        ${GLESV2_LIBRARY}
+    )
+
+    add_executable(DKRGLESInteractiveDemo
+        tests/gles_interactive_demo.cpp
+    )
+    target_include_directories(DKRGLESInteractiveDemo PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}/src/game"
+        "${DKR_MODERN_RUNTIME_SOURCE}/ultramodern/include"
+        "${DKR_MODERN_RUNTIME_SOURCE}/librecomp/include"
+        "${DKR_MODERN_RUNTIME_SOURCE}/thirdparty"
+    )
+    if(SDL2_INCLUDE_DIRS)
+        target_include_directories(DKRGLESInteractiveDemo PRIVATE ${SDL2_INCLUDE_DIRS})
+    endif()
+    target_link_libraries(DKRGLESInteractiveDemo PRIVATE
+        DKRGLESTestTarget
+        ${SDL2_LIBRARIES}
+        ${GLESV2_LIBRARY}
+    )
+
+    option(DKR_GLES_SANITIZE "Build GLES tests with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+    if(DKR_GLES_SANITIZE)
+        target_compile_options(DKRGLESTestTarget PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(DKRGLESTestTarget PRIVATE -fsanitize=address,undefined)
+        target_compile_options(DKRGLESRunnerTest PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(DKRGLESRunnerTest PRIVATE -fsanitize=address,undefined)
+        target_compile_options(DKRGLESInteractiveDemo PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(DKRGLESInteractiveDemo PRIVATE -fsanitize=address,undefined)
+    endif()
+endif()
 
 add_executable(DKRRomHash src/rom_hash.cpp)
 target_include_directories(DKRRomHash PRIVATE

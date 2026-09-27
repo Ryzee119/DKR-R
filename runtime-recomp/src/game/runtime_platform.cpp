@@ -14,12 +14,22 @@
 #include "ultramodern/ultramodern.hpp"
 #include "virtual_pak_policy.hpp"
 
-#if DKR_RUNTIME_HAS_RT64
-#include "runtime_ui.hpp"
-#include "imgui/imgui.h"
+#if !defined(DKR_RUNTIME_HAS_GLES)
+#define DKR_RUNTIME_HAS_GLES 0
+#endif
+#if !defined(DKR_RUNTIME_HAS_RT64)
+#define DKR_RUNTIME_HAS_RT64 0
+#endif
+#define DKR_PLATFORM_HAS_WINDOW (DKR_RUNTIME_HAS_RT64 || DKR_RUNTIME_HAS_GLES)
+
+#if DKR_PLATFORM_HAS_WINDOW
 #include <SDL.h>
 #if defined(_WIN32)
 #include <SDL_syswm.h>
+#endif
+#if DKR_RUNTIME_HAS_RT64
+#include "runtime_ui.hpp"
+#include "imgui/imgui.h"
 #endif
 #endif
 
@@ -76,7 +86,7 @@ std::atomic<dkr::runtime::platform::InputBackend> g_active_input_backend{
 std::atomic<bool> g_input_backend_switch_pending{false};
 std::atomic<bool> g_input_backend_switch_in_progress{false};
 
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
 std::mutex g_platform_mutex;
 std::mutex g_input_backend_transition_mutex;
 SDL_AudioDeviceID g_audio_device = 0;
@@ -1008,16 +1018,20 @@ void StopSdl3InputBackend() {
 }
 
 bool InitialiseSdl2ControllerBackend(bool subsystems_already_initialised) {
-    if (!subsystems_already_initialised &&
-        SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC |
-                          SDL_INIT_SENSOR) != 0) {
-        g_input_backend_detail = std::string(
-            "SDL2 controller fallback failed: ") + SDL_GetError();
-        std::fprintf(stderr, "[boot][input] %s\n",
-                     g_input_backend_detail.c_str());
-        SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC |
-                          SDL_INIT_SENSOR);
-        return false;
+    if (!subsystems_already_initialised) {
+        if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) {
+            g_input_backend_detail = std::string(
+                "SDL2 controller fallback failed: ") + SDL_GetError();
+            std::fprintf(stderr, "[boot][input] %s\n",
+                         g_input_backend_detail.c_str());
+            return false;
+        }
+        if (SDL_InitSubSystem(SDL_INIT_HAPTIC) != 0) {
+            std::fprintf(stderr, "[boot][input] SDL haptic not available: %s\n", SDL_GetError());
+        }
+        if (SDL_InitSubSystem(SDL_INIT_SENSOR) != 0) {
+            std::fprintf(stderr, "[boot][input] SDL sensor not available: %s\n", SDL_GetError());
+        }
     }
     g_sdl2_controller_subsystems_initialized = true;
     g_database_mapping_guids.clear();
@@ -1302,7 +1316,7 @@ void ApplyPendingInputBackendSwitch() {
 
 void dkr::runtime::platform::configure_input(
     const std::filesystem::path& config_directory) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     g_input_config_directory = config_directory;
     g_user_mapping_path = config_directory / "controllers" /
@@ -1342,7 +1356,7 @@ void dkr::runtime::platform::set_requested_input_backend(InputBackend backend) {
     backend = sanitise_input_backend(backend);
     const auto previous = g_requested_input_backend.exchange(
         backend, std::memory_order_acq_rel);
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     const bool switch_required = input_backend_switch_required(
         backend, active_input_backend(), IsSteamDeckHost(),
         DKR_RUNTIME_HAS_SDL3_INPUT_HOST != 0);
@@ -1363,7 +1377,7 @@ const char* dkr::runtime::platform::input_backend_name(InputBackend backend) {
 }
 
 std::string dkr::runtime::platform::input_backend_detail() {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     return g_input_backend_detail;
 #else
@@ -1377,7 +1391,7 @@ bool dkr::runtime::platform::input_backend_switch_pending() {
 }
 
 bool dkr::runtime::platform::initialise() {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     dkr::runtime::startup_performance::ScopedPhase platform_phase(
         "SDL platform and input initialization");
     // Request SDL's direct HID paths before controller discovery. String
@@ -1392,10 +1406,17 @@ bool dkr::runtime::platform::initialise() {
     SDL_SetHint("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
     const bool try_sdl3 = ShouldTrySdl3Input();
     const Uint32 sdl_flags = SDL_INIT_VIDEO | SDL_INIT_AUDIO |
-        SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC | SDL_INIT_SENSOR;
+        SDL_INIT_GAMECONTROLLER;
     if (SDL_Init(sdl_flags) != 0) {
         std::fprintf(stderr, "[boot][platform] SDL initialization failed: %s\n", SDL_GetError());
         return false;
+    }
+    // Attempt optional subsystems independently so missing haptics or sensors on handhelds do not abort boot
+    if (SDL_InitSubSystem(SDL_INIT_HAPTIC) != 0) {
+        std::fprintf(stderr, "[boot][platform] SDL haptic not available: %s\n", SDL_GetError());
+    }
+    if (SDL_InitSubSystem(SDL_INIT_SENSOR) != 0) {
+        std::fprintf(stderr, "[boot][platform] SDL sensor not available: %s\n", SDL_GetError());
     }
     SDL_version linked_version{};
     SDL_GetVersion(&linked_version);
@@ -1424,7 +1445,7 @@ bool dkr::runtime::platform::initialise() {
 }
 
 void dkr::runtime::platform::shutdown() {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     CancelSdl3InputProbe();
     g_sdl3_input_client.stop();
     std::scoped_lock lock(g_platform_mutex);
@@ -1462,23 +1483,35 @@ void dkr::runtime::platform::shutdown() {
 #endif
 }
 
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
 ultramodern::renderer::WindowHandle dkr::runtime::platform::create_window() {
     if (g_window == nullptr) {
         Uint32 flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
+#if defined(DKR_RUNTIME_HAS_GLES) && DKR_RUNTIME_HAS_GLES
+        flags |= SDL_WINDOW_OPENGL;
+        int default_w = 640;
+        int default_h = 480;
+#else
 #if defined(__linux__)
         flags |= SDL_WINDOW_VULKAN;
 #endif
+        int default_w = 1440;
+        int default_h = 900;
+#endif
         g_window = SDL_CreateWindow("DKR-R - Diddy Kong Racing Recompiled",
                                     SDL_WINDOWPOS_CENTERED,
-                                    SDL_WINDOWPOS_CENTERED, 1440, 900, flags);
+                                    SDL_WINDOWPOS_CENTERED, default_w, default_h, flags);
         if (g_window == nullptr) {
             std::fprintf(stderr, "[boot][window] SDL creation failed: %s\n", SDL_GetError());
         } else {
+#if defined(DKR_RUNTIME_HAS_GLES) && DKR_RUNTIME_HAS_GLES
+            SDL_SetWindowMinimumSize(g_window, 320, 240);
+#else
             // Both the launcher and the transparent in-game overlay are fully
             // responsive down to this size. Prevent a window-manager resize
             // from making controller targets or binding cards unusably small.
             SDL_SetWindowMinimumSize(g_window, 800, 600);
+#endif
         }
     }
 
@@ -1499,53 +1532,73 @@ ultramodern::renderer::WindowHandle dkr::runtime::platform::prepare_window_for_g
 #if defined(__linux__)
     if (g_window != nullptr) {
         const Uint32 existing_flags = SDL_GetWindowFlags(g_window);
-        std::fprintf(stderr,
-                     "[boot][window] launcher handoff flags=0x%08X vulkan=%s\n",
-                     static_cast<unsigned>(existing_flags),
-                     (existing_flags & SDL_WINDOW_VULKAN) != 0 ? "yes" : "no");
-        if ((existing_flags & SDL_WINDOW_VULKAN) == 0) {
-            int x = SDL_WINDOWPOS_CENTERED;
-            int y = SDL_WINDOWPOS_CENTERED;
-            int width = 1440;
-            int height = 900;
-            SDL_GetWindowPosition(g_window, &x, &y);
-            SDL_GetWindowSize(g_window, &width, &height);
-            const bool was_hidden = (existing_flags & SDL_WINDOW_HIDDEN) != 0;
-            const bool was_maximized =
-                (existing_flags & SDL_WINDOW_MAXIMIZED) != 0;
-            const Uint32 fullscreen_mode = existing_flags &
-                (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP);
-            SDL_DestroyWindow(g_window);
-            g_window = nullptr;
-
-            Uint32 replacement_flags =
-                SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_VULKAN;
-            if (was_hidden) {
-                replacement_flags |= SDL_WINDOW_HIDDEN;
-            }
-            g_window = SDL_CreateWindow("DKR-R - Diddy Kong Racing Recompiled", x, y, width, height,
-                                        replacement_flags);
-            if (g_window == nullptr) {
-                std::fprintf(stderr,
-                             "[boot][window] Vulkan handoff recreation failed: %s\n",
-                             SDL_GetError());
-                return {};
-            }
-            SDL_SetWindowMinimumSize(g_window, 800, 600);
-            if (was_maximized) {
-                SDL_MaximizeWindow(g_window);
-            }
-            if (fullscreen_mode != 0U &&
-                SDL_SetWindowFullscreen(g_window, fullscreen_mode) != 0) {
-                std::fprintf(stderr,
-                             "[boot][window] fullscreen handoff restore failed: %s\n",
-                             SDL_GetError());
-            }
-            std::fprintf(stderr,
-                         "[boot][window] recreated Vulkan-capable game window "
-                         "flags=0x%08X\n",
-                         static_cast<unsigned>(SDL_GetWindowFlags(g_window)));
+#if defined(DKR_RUNTIME_HAS_GLES) && DKR_RUNTIME_HAS_GLES
+        if ((existing_flags & SDL_WINDOW_OPENGL) != 0) {
+            return g_window;
         }
+        constexpr Uint32 kTargetFlag = SDL_WINDOW_OPENGL;
+        const char* kTargetName = "OpenGL";
+        int width = 640;
+        int height = 480;
+#else
+        if ((existing_flags & SDL_WINDOW_VULKAN) != 0) {
+            return g_window;
+        }
+        constexpr Uint32 kTargetFlag = SDL_WINDOW_VULKAN;
+        const char* kTargetName = "Vulkan";
+        int width = 1440;
+        int height = 900;
+#endif
+        std::fprintf(stderr,
+                     "[boot][window] launcher handoff flags=0x%08X %s=%s\n",
+                     static_cast<unsigned>(existing_flags),
+                     kTargetName,
+                     (existing_flags & kTargetFlag) != 0 ? "yes" : "no");
+        int x = SDL_WINDOWPOS_CENTERED;
+        int y = SDL_WINDOWPOS_CENTERED;
+        SDL_GetWindowPosition(g_window, &x, &y);
+        SDL_GetWindowSize(g_window, &width, &height);
+        const bool was_hidden = (existing_flags & SDL_WINDOW_HIDDEN) != 0;
+        const bool was_maximized =
+            (existing_flags & SDL_WINDOW_MAXIMIZED) != 0;
+        const Uint32 fullscreen_mode = existing_flags &
+            (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP);
+        SDL_DestroyWindow(g_window);
+        g_window = nullptr;
+
+        Uint32 replacement_flags =
+            SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | kTargetFlag;
+        if (was_hidden) {
+            replacement_flags |= SDL_WINDOW_HIDDEN;
+        }
+        g_window = SDL_CreateWindow("DKR-R - Diddy Kong Racing Recompiled", x, y, width, height,
+                                    replacement_flags);
+        if (g_window == nullptr) {
+            std::fprintf(stderr,
+                         "[boot][window] %s handoff recreation failed: %s\n",
+                         kTargetName,
+                         SDL_GetError());
+            return {};
+        }
+#if defined(DKR_RUNTIME_HAS_GLES) && DKR_RUNTIME_HAS_GLES
+        SDL_SetWindowMinimumSize(g_window, 320, 240);
+#else
+        SDL_SetWindowMinimumSize(g_window, 800, 600);
+#endif
+        if (was_maximized) {
+            SDL_MaximizeWindow(g_window);
+        }
+        if (fullscreen_mode != 0U &&
+            SDL_SetWindowFullscreen(g_window, fullscreen_mode) != 0) {
+            std::fprintf(stderr,
+                         "[boot][window] fullscreen handoff restore failed: %s\n",
+                         SDL_GetError());
+        }
+        std::fprintf(stderr,
+                     "[boot][window] recreated %s-capable game window "
+                     "flags=0x%08X\n",
+                     kTargetName,
+                     static_cast<unsigned>(SDL_GetWindowFlags(g_window)));
     }
 #endif
     return create_window();
@@ -1553,11 +1606,13 @@ ultramodern::renderer::WindowHandle dkr::runtime::platform::prepare_window_for_g
 
 void dkr::runtime::platform::pump_window_events(void*) {
     pump_input_backend_events();
+#if DKR_RUNTIME_HAS_RT64
     if (dkr::runtime::ui::lifecycle_request() !=
         dkr::runtime::ui::LifecycleRequest::None) {
         ultramodern::quit();
         return;
     }
+#endif
     SDL_Event event{};
     while (SDL_PollEvent(&event) != 0) {
         update_fullscreen_cursor(&event);
@@ -1567,6 +1622,7 @@ void dkr::runtime::platform::pump_window_events(void*) {
             return;
         }
 
+#if DKR_RUNTIME_HAS_RT64
         // Overlay lifecycle commands are host-global. Process them before
         // forwarding the event to ImGui so a focused widget cannot swallow
         // Escape, F1 or Back/View and leave the player trapped in the UI.
@@ -1586,15 +1642,24 @@ void dkr::runtime::platform::pump_window_events(void*) {
         }
 
         dkr::runtime::ui::handle_runtime_event(&event);
+#else
+        if (handle_window_shortcut(&event, true)) {
+            continue;
+        }
+#endif
     }
     if (dkr::runtime::input::consume_shortcut_request(
             dkr::runtime::input::ShortcutAction::ToggleOverlay)) {
+#if DKR_RUNTIME_HAS_RT64
         dkr::runtime::ui::toggle_overlay();
+#endif
     }
     if (dkr::runtime::input::consume_shortcut_request(
             dkr::runtime::input::ShortcutAction::ToggleTexturePack)) {
+#if DKR_RUNTIME_HAS_RT64
         std::string status;
         dkr::runtime::texture_packs::toggle_last_selected(status);
+#endif
     }
     if (dkr::runtime::input::consume_shortcut_request(
             dkr::runtime::input::ShortcutAction::ToggleFullscreen)) {
@@ -1604,10 +1669,12 @@ void dkr::runtime::platform::pump_window_events(void*) {
             dkr::runtime::input::ShortcutAction::RecenterGyro)) {
         dkr::runtime::input::recenter_gyro(online_input_profile());
     }
+#if DKR_RUNTIME_HAS_RT64
     if (dkr::runtime::ui::lifecycle_request() !=
         dkr::runtime::ui::LifecycleRequest::None) {
         ultramodern::quit();
     }
+#endif
     update_fullscreen_cursor();
 }
 
@@ -1650,7 +1717,9 @@ void dkr::runtime::platform::toggle_fullscreen(bool renderer_active) {
         ? ultramodern::renderer::WindowMode::Windowed
         : ultramodern::renderer::WindowMode::Fullscreen;
     ultramodern::renderer::set_graphics_config(config);
+#if DKR_RUNTIME_HAS_RT64
     dkr::runtime::ui::persist_settings();
+#endif
 
     // The launcher has no RT64 swap chain yet, so SDL owns this transition.
     // In game, publishing GraphicsConfig lets RT64 switch at its safe update
@@ -1715,6 +1784,7 @@ void dkr::runtime::platform::update_fullscreen_cursor(const void* raw_event) {
 }
 
 void dkr::runtime::platform::update_ui_gamepad_navigation() {
+#if DKR_RUNTIME_HAS_RT64
     ImGuiIO& io = ImGui::GetIO();
     if (active_input_backend() == InputBackend::SDL3Native) {
         std::scoped_lock lock(g_platform_mutex);
@@ -1860,6 +1930,7 @@ void dkr::runtime::platform::update_ui_gamepad_navigation() {
         : 0.0F;
     io.AddKeyAnalogEvent(ImGuiKey_GamepadL2, left_trigger > 0.10F, left_trigger);
     io.AddKeyAnalogEvent(ImGuiKey_GamepadR2, right_trigger > 0.10F, right_trigger);
+#endif
 }
 
 #endif
@@ -1869,7 +1940,7 @@ void dkr::runtime::platform::queue_audio(std::int16_t* samples,
     if (!dkr::runtime::netplay::external_side_effects_allowed()) return;
     dkr::runtime::telemetry::record_audio_buffer(sample_count);
     const auto index = ++g_audio_buffers;
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     if (g_audio_device != 0 && sample_count != 0) {
         const std::size_t maximum_samples =
@@ -2016,7 +2087,7 @@ void dkr::runtime::platform::request_ui_tone(float frequency_hz,
     g_ui_tone_duration_ms.store(clamped_duration, std::memory_order_relaxed);
     const std::uint64_t generation =
         g_ui_tone_generation.fetch_add(1U, std::memory_order_release) + 1U;
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     if (g_audio_device == 0 &&
         QueueStandaloneUiToneLocked(clamped_frequency, clamped_duration)) {
@@ -2063,7 +2134,7 @@ void dkr::runtime::platform::set_treble_gain(float decibels) {
 }
 
 std::size_t dkr::runtime::platform::audio_frames_remaining() {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     if (g_audio_device != 0) {
         // SDL's queue contains one deliberately protected host-side cushion
@@ -2115,7 +2186,7 @@ void dkr::runtime::platform::set_audio_frequency(std::uint32_t frequency) {
     if (frequency == 0) {
         return;
     }
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     if (g_audio_device != 0 && g_audio_frequency == frequency) {
         return;
@@ -2144,6 +2215,9 @@ void dkr::runtime::platform::set_audio_frequency(std::uint32_t frequency) {
     desired.samples = 512;
     g_audio_device = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
     if (g_audio_device == 0) {
+        g_audio_device = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, SDL_AUDIO_ALLOW_ANY_CHANGE);
+    }
+    if (g_audio_device == 0) {
         std::fprintf(stderr, "[boot][audio] open failed at %u Hz: %s\n",
                      frequency, SDL_GetError());
         g_audio_frequency = 0;
@@ -2164,7 +2238,7 @@ void dkr::runtime::platform::set_audio_frequency(std::uint32_t frequency) {
 }
 
 void dkr::runtime::platform::poll_input() {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     if (g_input_backend_switch_in_progress.load(std::memory_order_acquire)) {
         ClearPublishedControllerInput(false);
         if (g_online_input_routing.load(std::memory_order_acquire)) {
@@ -2184,9 +2258,17 @@ void dkr::runtime::platform::poll_input() {
         SDL_GameControllerUpdate();
         RefreshControllers();
     }
+#if DKR_RUNTIME_HAS_RT64
     const bool blocked = dkr::runtime::ui::overlay_visible();
+#else
+    const bool blocked = false;
+#endif
+#if DKR_RUNTIME_HAS_GLES
+    const bool window_focused = true;
+#else
     const bool window_focused = g_window != nullptr &&
         (SDL_GetWindowFlags(g_window) & SDL_WINDOW_INPUT_FOCUS) != 0U;
+#endif
     const bool online_routing =
         g_online_input_routing.load(std::memory_order_acquire);
     const int configured_keyboard_player =
@@ -2324,7 +2406,7 @@ bool dkr::runtime::platform::get_local_online_input(
 
 void dkr::runtime::platform::set_rumble(int controller, bool enabled) {
     if (!dkr::runtime::netplay::external_side_effects_allowed()) return;
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     if (g_input_backend_switch_in_progress.load(std::memory_order_acquire)) {
         return;
     }
@@ -2389,7 +2471,7 @@ bool dkr::runtime::platform::rumble_enabled() {
 
 void dkr::runtime::platform::set_rumble_enabled(bool enabled) {
     g_rumble_enabled.store(enabled, std::memory_order_release);
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     if (!enabled) {
         if (active_input_backend() == InputBackend::SDL3Native) {
             std::vector<int> instances;
@@ -2415,7 +2497,7 @@ void dkr::runtime::platform::set_rumble_enabled(bool enabled) {
 }
 
 bool dkr::runtime::platform::gyro_available(std::size_t player) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     if (active_input_backend() == InputBackend::SDL3Native) {
         const auto* device = Sdl3DeviceForInstance(
@@ -2439,7 +2521,7 @@ dkr::runtime::platform::get_connected_device_info(int controller) {
     if (controller < 0 || controller >= static_cast<int>(kControllerCount)) {
         return {ultramodern::input::Device::None, ultramodern::input::Pak::None};
     }
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     const bool expose_rumble =
         dkr::runtime::pak::policy::expose_rumble_pak(
             g_rumble_enabled.load(std::memory_order_acquire), true);
@@ -2479,7 +2561,7 @@ dkr::runtime::platform::get_connected_device_info(int controller) {
 std::vector<dkr::runtime::platform::ControllerSummary>
 dkr::runtime::platform::connected_controllers() {
     std::vector<ControllerSummary> summaries;
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     if (active_input_backend() == InputBackend::SDL3Native) {
         summaries.reserve(g_sdl3_input_state.devices.size());
@@ -2517,7 +2599,7 @@ dkr::runtime::platform::connected_controllers() {
 dkr::runtime::platform::PlayerControllerStatus
 dkr::runtime::platform::player_controller_status(std::size_t player) {
     PlayerControllerStatus status{};
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     if (player >= kControllerCount) {
         return status;
     }
@@ -2557,7 +2639,7 @@ dkr::runtime::platform::player_input_preview(std::size_t player) {
         g_buttons[player].load(std::memory_order_acquire),
         g_stick_x[player].load(std::memory_order_acquire),
         g_stick_y[player].load(std::memory_order_acquire)};
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     // The gameplay input path is deliberately neutral while the overlay owns
     // input, and it may not run at all on the launcher screen. Read the
     // selected player's assigned SDL controller directly so this diagnostic
@@ -2591,7 +2673,7 @@ dkr::runtime::platform::player_input_preview(std::size_t player) {
 
 dkr::runtime::controllers::AssignmentMode
 dkr::runtime::platform::controller_assignment_mode() {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     return g_controller_assignment_mode;
 #else
@@ -2601,7 +2683,7 @@ dkr::runtime::platform::controller_assignment_mode() {
 
 void dkr::runtime::platform::set_controller_assignment_mode(
     controllers::AssignmentMode mode) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     const auto next = mode == controllers::AssignmentMode::Manual
         ? controllers::AssignmentMode::Manual
@@ -2623,7 +2705,7 @@ void dkr::runtime::platform::set_controller_assignment_mode(
 
 bool dkr::runtime::platform::assign_controller(std::size_t player,
                                                int instance) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     if (player >= kControllerCount) {
         return false;
     }
@@ -2663,7 +2745,7 @@ bool dkr::runtime::platform::assign_controller(std::size_t player,
 }
 
 bool dkr::runtime::platform::clear_controller_assignment(std::size_t player) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     if (!controllers::clear(g_controller_assignments, player)) {
         return false;
@@ -2682,7 +2764,7 @@ bool dkr::runtime::platform::clear_controller_assignment(std::size_t player) {
 }
 
 int dkr::runtime::platform::controller_instance_for_player(std::size_t player) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     if (player >= kControllerCount) {
         return -1;
     }
@@ -2702,7 +2784,7 @@ int dkr::runtime::platform::controller_instance_for_player(std::size_t player) {
 }
 
 int dkr::runtime::platform::controller_player_for_instance(int instance) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     if (active_input_backend() == InputBackend::SDL3Native) {
         for (std::size_t player = 0U; player < kControllerCount; ++player) {
@@ -2726,7 +2808,7 @@ int dkr::runtime::platform::controller_player_for_instance(int instance) {
 }
 
 bool dkr::runtime::platform::identify_controller(std::size_t player) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     if (player >= kControllerCount) {
         return false;
     }
@@ -2753,7 +2835,7 @@ bool dkr::runtime::platform::identify_controller(std::size_t player) {
 
 bool dkr::runtime::platform::begin_controller_mapping(int instance,
                                                       std::size_t player) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     if (player >= kControllerCount) {
         return false;
     }
@@ -2795,7 +2877,7 @@ bool dkr::runtime::platform::begin_controller_mapping(int instance,
 
 bool dkr::runtime::platform::handle_controller_mapping_event(
     const void* raw_event) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     const auto* event = static_cast<const SDL_Event*>(raw_event);
     if (event == nullptr) {
         return false;
@@ -2841,14 +2923,14 @@ bool dkr::runtime::platform::handle_controller_mapping_event(
             static_cast<int>(event->jbutton.button) == held.index) {
             released = true;
         } else if (held.kind == PhysicalInputKind::Axis &&
-                   event->type == SDL_JOYAXISMOTION &&
-                   static_cast<int>(event->jaxis.axis) == held.index &&
-                   std::abs(axis_delta(held.index, event->jaxis.value)) < 8000) {
+                    event->type == SDL_JOYAXISMOTION &&
+                    static_cast<int>(event->jaxis.axis) == held.index &&
+                    std::abs(axis_delta(held.index, event->jaxis.value)) < 8000) {
             released = true;
         } else if (held.kind == PhysicalInputKind::Hat &&
-                   event->type == SDL_JOYHATMOTION &&
-                   static_cast<int>(event->jhat.hat) == held.index &&
-                   event->jhat.value == SDL_HAT_CENTERED) {
+                    event->type == SDL_JOYHATMOTION &&
+                    static_cast<int>(event->jhat.hat) == held.index &&
+                    event->jhat.value == SDL_HAT_CENTERED) {
             released = true;
         }
         if (released) {
@@ -2913,7 +2995,7 @@ bool dkr::runtime::platform::handle_controller_mapping_event(
 }
 
 void dkr::runtime::platform::cancel_controller_mapping() {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     g_mapping_session = {};
 #endif
@@ -2926,7 +3008,7 @@ void dkr::runtime::platform::dismiss_controller_mapping() {
 dkr::runtime::platform::ControllerMappingProgress
 dkr::runtime::platform::controller_mapping_progress() {
     ControllerMappingProgress progress{};
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     progress.visible = g_mapping_session.state !=
         ControllerMappingSession::State::Idle;
@@ -2949,7 +3031,7 @@ dkr::runtime::platform::controller_mapping_progress() {
 
 bool dkr::runtime::platform::import_controller_mappings(
     const std::filesystem::path& source, std::string& status) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     if (active_input_backend() == InputBackend::SDL3Native) {
         (void)source;
         status = "Controller map import uses SDL2 compatibility mode. "
@@ -2992,7 +3074,7 @@ bool dkr::runtime::platform::import_controller_mappings(
 
 bool dkr::runtime::platform::export_controller_mappings(
     const std::filesystem::path& destination, std::string& status) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     std::error_code error;
     if (!std::filesystem::is_regular_file(g_user_mapping_path, error)) {
@@ -3017,7 +3099,7 @@ bool dkr::runtime::platform::export_controller_mappings(
 
 dkr::runtime::controllers::DesiredAssignments
 dkr::runtime::platform::controller_assignment_keys() {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     return g_controller_assignments;
 #else
@@ -3028,7 +3110,7 @@ dkr::runtime::platform::controller_assignment_keys() {
 void dkr::runtime::platform::restore_controller_assignments(
     controllers::AssignmentMode mode,
     const controllers::DesiredAssignments& assignments) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_WINDOW
     std::scoped_lock lock(g_platform_mutex);
     g_controller_assignment_mode = mode == controllers::AssignmentMode::Manual
         ? controllers::AssignmentMode::Manual

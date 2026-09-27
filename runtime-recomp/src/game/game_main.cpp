@@ -20,6 +20,9 @@
 #include "runtime_ui.hpp"
 #include "runtime_hud_layout.hpp"
 #include <SDL.h>
+#elif defined(DKR_RUNTIME_HAS_GLES) && DKR_RUNTIME_HAS_GLES
+#include "gles_renderer.hpp"
+#include <SDL.h>
 #endif
 
 #include "librecomp/game.hpp"
@@ -68,6 +71,15 @@ std::filesystem::path g_crash_directory;
 
 bool ConfigurePersistentRuntimeLog(
     const std::filesystem::path& config_directory) {
+#if defined(__linux__)
+    // On Linux / PortMaster handhelds, preserve stderr connected to the console
+    // and launcher tee process so diagnostics, initialization logs, and crash
+    // traces are visible in real-time and captured in log.txt.
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+    std::fprintf(stderr, "[boot] DKR-R %s persistent runtime log\n",
+                 DKR_RELEASE_VERSION);
+    return true;
+#else
     if (!dkr::runtime::support::diagnostic_logging_enabled()) {
         return true;
     }
@@ -102,6 +114,7 @@ bool ConfigurePersistentRuntimeLog(
     std::fprintf(stderr, "[boot] DKR-R %s persistent runtime log\n",
                  DKR_RELEASE_VERSION);
     return true;
+#endif
 }
 
 std::filesystem::path DefaultConfigDirectory(const char* executable_argument) {
@@ -752,6 +765,38 @@ int DkrMain(int argc, char** argv) {
         prepared_mods = startup.mods;
         rom_identified = false;
     }
+#elif defined(DKR_RUNTIME_HAS_GLES) && DKR_RUNTIME_HAS_GLES
+    const auto window_started_at =
+        dkr::runtime::startup_performance::Clock::now();
+    auto window_handle = dkr::runtime::platform::create_window();
+    dkr::runtime::startup_performance::report("window-create",
+                                               window_started_at);
+#if defined(_WIN32) || defined(__APPLE__)
+    if (window_handle.window == nullptr) {
+#else
+    if (window_handle == nullptr) {
+#endif
+        std::fprintf(stderr, "[boot][window] failed to create the DKR-R window\n");
+        dkr::runtime::platform::shutdown();
+        return 4;
+    }
+    if (rom_path.empty()) {
+        for (const auto& candidate_dir : {std::filesystem::current_path(), config_directory}) {
+            for (const auto& name : {"baserom.us.v10.z64", "baserom.us.v11.z64", "baserom.eu.v10.z64", "baserom.eu.v11.z64", "baserom.jp.z64", "dkr.z64"}) {
+                const auto candidate = candidate_dir / name;
+                if (std::filesystem::exists(candidate)) {
+                    rom_path = candidate;
+                    break;
+                }
+            }
+            if (!rom_path.empty()) break;
+        }
+        if (rom_path.empty()) {
+            std::fprintf(stderr, "[boot][rom] No ROM specified. Pass --rom <path_to_rom.z64> or place baserom.us.v10.z64 in the game folder.\n");
+            dkr::runtime::platform::shutdown();
+            return 2;
+        }
+    }
 #else
     const ultramodern::renderer::WindowHandle window_handle{};
     if (rom_path.empty()) {
@@ -777,7 +822,7 @@ int DkrMain(int argc, char** argv) {
         std::fprintf(stderr,
                      "[boot][log] could not create the persistent runtime log\n");
     }
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_RUNTIME_HAS_RT64 || (defined(DKR_RUNTIME_HAS_GLES) && DKR_RUNTIME_HAS_GLES)
     if (!rom_identified) {
         window_handle = dkr::runtime::platform::prepare_window_for_game();
 #if defined(_WIN32) || defined(__APPLE__)
@@ -807,6 +852,8 @@ int DkrMain(int argc, char** argv) {
     const ultramodern::renderer::callbacks_t renderer_callbacks{
 #if DKR_RUNTIME_HAS_RT64
         .create_render_context = dkr::runtime::CreateRT64Renderer};
+#elif defined(DKR_RUNTIME_HAS_GLES) && DKR_RUNTIME_HAS_GLES
+        .create_render_context = dkr::runtime::CreateGLES2Renderer};
 #else
         .create_render_context = dkr::runtime::CreateDiagnosticRenderer};
 #endif
@@ -939,13 +986,15 @@ int DkrMain(int argc, char** argv) {
         const auto runtime_started_at = std::chrono::steady_clock::now();
         bool timeout_requested = false;
         while (!runtime_finished.load(std::memory_order_acquire)) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_RUNTIME_HAS_RT64 || (defined(DKR_RUNTIME_HAS_GLES) && DKR_RUNTIME_HAS_GLES)
             // The SDL video subsystem and native window were created on this
             // thread. Keep all window/input event pumping here for Windows,
             // X11 and Wayland compatibility while the recompiler owns its
             // worker.
             dkr::runtime::platform::pump_window_events(nullptr);
+#if DKR_RUNTIME_HAS_RT64
             dkr::runtime::service_online_wait_presentation();
+#endif
 #endif
             if (!timeout_requested && timeout_seconds != 0 &&
                 std::chrono::steady_clock::now() - runtime_started_at >=

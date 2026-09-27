@@ -97,8 +97,19 @@ target_link_libraries(DKRLegacyModCore PRIVATE DKRLegacyDelta)
 
 # Reuse the exact pinned compression and hashing code already shipped with
 # DKR-R. A standalone importer test does not need the renderer or networking.
-add_library(DKRLegacyModMiniz STATIC
-    "${DKRPORT_ROOT}/extern/rt64/src/contrib/miniz/miniz.c")
+if(TARGET miniz)
+    set(_dkr_mod_miniz miniz)
+elseif(EXISTS "${DKRPORT_ROOT}/extern/rt64/src/contrib/miniz/miniz.c")
+    add_library(DKRLegacyModMiniz STATIC
+        "${DKRPORT_ROOT}/extern/rt64/src/contrib/miniz/miniz.c")
+    set(_dkr_mod_miniz DKRLegacyModMiniz)
+else()
+    add_library(DKRLegacyModMiniz STATIC
+        "${DKRPORT_ROOT}/extern/n64-modern-runtime/thirdparty/miniz/miniz.c")
+    target_include_directories(DKRLegacyModMiniz PRIVATE
+        "${CMAKE_BINARY_DIR}/n64-modern-runtime/librecomp/miniz")
+    set(_dkr_mod_miniz DKRLegacyModMiniz)
+endif()
 if(TARGET mbedcrypto)
     # Use the application's existing hashing provider and its ABI/configuration.
     set(_dkr_mod_hash mbedcrypto)
@@ -122,7 +133,7 @@ if(TARGET rt64)
     # worker gets a separate small provider, never the renderer or window stack.
     target_link_libraries(DKRLegacyModCore PRIVATE rt64)
 else()
-    target_link_libraries(DKRLegacyModCore PRIVATE DKRLegacyModMiniz)
+    target_link_libraries(DKRLegacyModCore PRIVATE ${_dkr_mod_miniz})
 endif()
 
 add_library(DKRLegacyGuestIO STATIC "${_dkr_mod_src}/legacy_runtime_io.cpp"
@@ -147,7 +158,7 @@ set_target_properties(DKRLegacyModWorker PROPERTIES OUTPUT_NAME "DKR-R-ModWorker
 add_library(DKRLegacyWorkerCore STATIC $<TARGET_OBJECTS:DKRLegacyModCore>)
 target_include_directories(DKRLegacyWorkerCore PUBLIC
     "$<TARGET_PROPERTY:DKRLegacyModCore,INTERFACE_INCLUDE_DIRECTORIES>")
-target_link_libraries(DKRLegacyWorkerCore PRIVATE DKRLegacyDelta DKRLegacyModMiniz ${_dkr_mod_hash})
+target_link_libraries(DKRLegacyWorkerCore PRIVATE DKRLegacyDelta ${_dkr_mod_miniz} ${_dkr_mod_hash})
 target_link_libraries(DKRLegacyModWorker PRIVATE DKRLegacyWorkerCore DKRLegacyModProcess)
 
 add_library(DKRLegacyImportLibrary STATIC "${_dkr_mod_src}/legacy_import_library.cpp"
@@ -160,13 +171,14 @@ add_library(DKRLegacyModLaunch STATIC "${_dkr_mod_src}/legacy_mod_launch.cpp")
 # character-augmented boot bank, so the launch owns this dependency.
 add_library(DKRCustomTracksCore STATIC "${_dkr_mod_src}/../custom_tracks.cpp")
 target_include_directories(DKRCustomTracksCore PUBLIC "${_dkr_mod_src}/.."
-    "${DKRPORT_ROOT}/extern/rt64/src/contrib")
+    "${DKRPORT_ROOT}/extern/rt64/src/contrib"
+    "${DKRPORT_ROOT}/extern/n64-modern-runtime/thirdparty")
 target_compile_features(DKRCustomTracksCore PUBLIC cxx_std_20)
 target_compile_definitions(DKRCustomTracksCore PRIVATE NOMINMAX)
 if(TARGET rt64)
     # Same single miniz provider as DKRLegacyModCore inside the game.
     target_link_libraries(DKRCustomTracksCore PRIVATE rt64)
 else()
-    target_link_libraries(DKRCustomTracksCore PRIVATE DKRLegacyModMiniz)
+    target_link_libraries(DKRCustomTracksCore PRIVATE ${_dkr_mod_miniz})
 endif()
 target_link_libraries(DKRLegacyModLaunch PUBLIC DKRLegacyImportLibrary DKRCustomTracksCore)

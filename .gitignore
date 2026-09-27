@@ -106,9 +106,11 @@ token*.json
 
 # DKR decomp/recomp working data generated locally
 runtime-recomp/RecompiledFuncs/
+runtime-recomp/RecompiledFuncs-v80/
 runtime-recomp/RecompiledPatches/
 build/runtime-tools/
 runtime-recomp/build/
+/aarch64-sysroot*/
 
 # tools/blender holds the DKR track editor addon and is tracked. Everything else
 # under tools/ is not. Git does not descend into an excluded directory, so the

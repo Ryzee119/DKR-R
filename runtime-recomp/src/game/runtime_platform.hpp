@@ -24,7 +24,7 @@ const char* input_backend_name(InputBackend backend);
 std::string input_backend_detail();
 bool input_backend_switch_pending();
 
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_RUNTIME_HAS_RT64 || (defined(DKR_RUNTIME_HAS_GLES) && DKR_RUNTIME_HAS_GLES)
 ultramodern::renderer::WindowHandle create_window();
 ultramodern::renderer::WindowHandle prepare_window_for_game();
 void pump_window_events(void*);

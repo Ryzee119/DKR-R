@@ -2,6 +2,7 @@ name: macOS policy tests
 on: [push, pull_request]
 jobs:
   macos:
+    if: github.repository == 'ThatGuyMcd/DKR-R'
     strategy:
       matrix:
         runner: [macos-15, macos-15-intel]

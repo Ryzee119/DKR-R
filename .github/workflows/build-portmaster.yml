@@ -1,0 +1,105 @@
+name: Build PortMaster (R36XX / RK3326)
+
+on:
+  push:
+    branches: [ '**' ]
+  pull_request:
+    branches: [ '**' ]
+  workflow_dispatch:
+
+jobs:
+  build-portmaster:
+    name: Build PortMaster ARM64 Package
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build tools and AArch64 cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            ninja-build \
+            clang \
+            lld \
+            llvm \
+            binutils-aarch64-linux-gnu \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            zip \
+            python3
+
+      - name: Prepare pinned runtime dependencies
+        run: |
+          python3 scripts/bootstrap_dependencies.py --only n64-modern-runtime --only gekkonet --only monocypher
+          bash scripts/apply-dependency-patches.sh
+
+      - name: Cache aarch64 sysroot
+        id: sysroot-cache
+        uses: actions/cache@v4
+        with:
+          path: aarch64-sysroot-focal
+          key: aarch64-sysroot-focal-${{ hashFiles('scripts/setup-aarch64-sysroot.sh', 'portmaster/dkrr/lib/**') }}
+
+      - name: Build aarch64 sysroot
+        if: steps.sysroot-cache.outputs.cache-hit != 'true'
+        run: bash scripts/setup-aarch64-sysroot.sh
+
+      - name: Build and Package for PortMaster (RK3326 / R36XX)
+        run: |
+          NO_ROM=1 ./scripts/build-r36xx.sh --no-rom
+
+      - name: Verify package structure and ensure ROM is not included
+        run: |
+          test -f dist/DiddyKongRacing-R36XX-PortMaster.zip
+          unzip -l dist/DiddyKongRacing-R36XX-PortMaster.zip
+          # Verify port launcher exists
+          unzip -l dist/DiddyKongRacing-R36XX-PortMaster.zip | grep "Diddy Kong Racing.sh"
+          # Verify executable exists in dkrr/
+          unzip -l dist/DiddyKongRacing-R36XX-PortMaster.zip | grep "dkrr/DKR-R"
+          # Ensure no ROM files (.z64, .v64, .n64) are present in the package
+          if unzip -l dist/DiddyKongRacing-R36XX-PortMaster.zip | grep -iE '\.(z64|v64|n64)$'; then
+            echo "ERROR: ROM file detected in PortMaster package!"
+            exit 1
+          fi
+          echo "PortMaster package verified successfully (No ROM included)."
+
+      - name: Verify binary architecture and GLIBC compatibility
+        run: |
+          mkdir -p build/verify-extract
+          unzip -p dist/DiddyKongRacing-R36XX-PortMaster.zip dkrr/DKR-R > build/verify-extract/DKR-R
+          chmod +x build/verify-extract/DKR-R
+          file build/verify-extract/DKR-R | grep -E "ELF 64-bit LSB.*ARM aarch64"
+
+          # Verify max GLIBC symbol requirement <= GLIBC_2.31
+          MAX_GLIBC=$(aarch64-linux-gnu-objdump -T build/verify-extract/DKR-R | grep -o 'GLIBC_2\.[0-9]*' | sort -uV | tail -1)
+          echo "Highest GLIBC dependency: $MAX_GLIBC"
+          python3 -c "
+          import sys
+          ver_str = '$MAX_GLIBC'.replace('GLIBC_', '')
+          parts = [int(p) for p in ver_str.split('.')]
+          assert parts <= [2, 31], f'GLIBC {ver_str} exceeds maximum allowed 2.31 for PortMaster/ArkOS'
+          print('GLIBC version compatibility check passed:', '$MAX_GLIBC')
+          "
+
+          # Verify dynamic dependencies: should link libSDL2 and libGLESv2, but NOT libstdc++
+          DYNAMIC_DEPS=$(aarch64-linux-gnu-readelf -d build/verify-extract/DKR-R | grep NEEDED || true)
+          echo "Dynamic dependencies:"
+          echo "$DYNAMIC_DEPS"
+          echo "$DYNAMIC_DEPS" | grep -q "libSDL2-2.0.so.0"
+          echo "$DYNAMIC_DEPS" | grep -q "libGLESv2.so.2"
+          if echo "$DYNAMIC_DEPS" | grep -q "libstdc++.so"; then
+            echo "ERROR: libstdc++ is dynamically linked; expected static linking!"
+            exit 1
+          fi
+          echo "Binary dependencies verified successfully."
+
+      - name: Upload PortMaster artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DiddyKongRacing-R36XX-PortMaster
+          path: dist/DiddyKongRacing-R36XX-PortMaster.zip
+          if-no-files-found: error
+

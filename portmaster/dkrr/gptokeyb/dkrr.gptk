@@ -1,0 +1,35 @@
+back = esc
+start = enter
+
+a = space
+b = leftshift
+x = z
+y = space
+
+l1 = q
+l2 = z
+r1 = e
+r2 = e
+
+up = up
+down = down
+left = left
+right = right
+
+left_analog_up = w
+left_analog_down = s
+left_analog_left = a
+left_analog_right = d
+
+right_analog_up = i
+right_analog_down = k
+right_analog_left = j
+right_analog_right = l
+
+deadzone_mode = scaled_radial
+deadzone = 4096
+deadzone_scale = 8
+deadzone_delay = 16
+
+hotkey = back
+hotkey_start = kill

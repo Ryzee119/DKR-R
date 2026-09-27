@@ -2,7 +2,9 @@
 #include "motion_steering_policy.hpp"
 #include "runtime_enhancements.hpp"
 
-#if DKR_RUNTIME_HAS_RT64
+#define DKR_PLATFORM_HAS_INPUT (DKR_RUNTIME_HAS_RT64 || DKR_RUNTIME_HAS_GLES)
+
+#if DKR_PLATFORM_HAS_INPUT
 #include <SDL.h>
 #endif
 
@@ -41,15 +43,15 @@ struct BindingPair {
     int controller_secondary = dkr::runtime::input::kUnbound;
 };
 
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_INPUT
 constexpr std::array<BindingPair, static_cast<std::size_t>(Action::Count)> kDefaults{{
     {SDL_SCANCODE_W, kAxisSourceBase + SDL_CONTROLLER_AXIS_LEFTY * 2},
     {SDL_SCANCODE_S, kAxisSourceBase + SDL_CONTROLLER_AXIS_LEFTY * 2 + 1},
     {SDL_SCANCODE_A, kAxisSourceBase + SDL_CONTROLLER_AXIS_LEFTX * 2},
     {SDL_SCANCODE_D, kAxisSourceBase + SDL_CONTROLLER_AXIS_LEFTX * 2 + 1},
-    {SDL_SCANCODE_SPACE, SDL_CONTROLLER_BUTTON_A},
-    {SDL_SCANCODE_LSHIFT, SDL_CONTROLLER_BUTTON_X},
-    {SDL_SCANCODE_Z, kAxisSourceBase + SDL_CONTROLLER_AXIS_TRIGGERLEFT * 2 + 1},
+    {SDL_SCANCODE_SPACE, SDL_CONTROLLER_BUTTON_A, SDL_CONTROLLER_BUTTON_B},
+    {SDL_SCANCODE_LSHIFT, SDL_CONTROLLER_BUTTON_X, SDL_CONTROLLER_BUTTON_Y},
+    {SDL_SCANCODE_Z, kAxisSourceBase + SDL_CONTROLLER_AXIS_TRIGGERLEFT * 2 + 1, SDL_CONTROLLER_BUTTON_LEFTSHOULDER},
     {SDL_SCANCODE_RETURN, SDL_CONTROLLER_BUTTON_START},
     {SDL_SCANCODE_UP, SDL_CONTROLLER_BUTTON_DPAD_UP},
     {SDL_SCANCODE_DOWN, SDL_CONTROLLER_BUTTON_DPAD_DOWN},
@@ -74,7 +76,7 @@ std::mutex g_binding_mutex;
 std::atomic<int> g_keyboard_player{0};
 std::array<std::atomic<bool>, dkr::runtime::input::kPlayerCount>
     g_background_input_enabled{};
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_INPUT
 using ShortcutBindings = std::array<dkr::runtime::input::ShortcutBinding,
     static_cast<std::size_t>(dkr::runtime::input::ShortcutAction::Count)>;
 ShortcutBindings g_shortcut_keyboard{{
@@ -174,7 +176,7 @@ std::size_t VehicleIndex(dkr::runtime::input::VehicleClass vehicle) {
             dkr::runtime::input::VehicleClass::Count) - 1U);
 }
 
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_INPUT
 float NormaliseAxis(Sint16 value, Sint16 deadzone = 7849) {
     const int magnitude = std::abs(static_cast<int>(value));
     if (magnitude <= deadzone) {
@@ -572,7 +574,7 @@ void dkr::runtime::input::reset_defaults() {
         std::scoped_lock lock(g_binding_mutex);
         g_bindings.fill(kDefaults);
     }
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_INPUT
     {
         std::scoped_lock lock(g_shortcut_mutex);
         g_shortcut_keyboard.fill({});
@@ -857,7 +859,7 @@ float dkr::runtime::input::gyro_calibration_progress(std::size_t player) {
 }
 
 int dkr::runtime::input::encode_controller_button(int button) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_INPUT
     return button >= 0 && button < SDL_CONTROLLER_BUTTON_MAX ? button : kUnbound;
 #else
     (void)button;
@@ -866,7 +868,7 @@ int dkr::runtime::input::encode_controller_button(int button) {
 }
 
 int dkr::runtime::input::encode_controller_axis(int axis, bool positive) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_INPUT
     return axis >= 0 && axis < SDL_CONTROLLER_AXIS_MAX
         ? kAxisSourceBase + axis * 2 + (positive ? 1 : 0)
         : kUnbound;
@@ -878,7 +880,7 @@ int dkr::runtime::input::encode_controller_axis(int axis, bool positive) {
 }
 
 std::string dkr::runtime::input::keyboard_binding_name(int scancode) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_INPUT
     if (scancode < 0 || scancode >= SDL_NUM_SCANCODES) {
         return "Unbound";
     }
@@ -891,7 +893,7 @@ std::string dkr::runtime::input::keyboard_binding_name(int scancode) {
 }
 
 std::string dkr::runtime::input::controller_binding_name(int source) {
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_INPUT
     if (source >= 0 && source < SDL_CONTROLLER_BUTTON_MAX) {
         const char* name = SDL_GameControllerGetStringForButton(
             static_cast<SDL_GameControllerButton>(source));
@@ -919,7 +921,7 @@ dkr::runtime::input::State dkr::runtime::input::poll(
     bool include_keyboard, bool blocked, bool allow_quick_restart,
     bool global_shortcut_owner) {
     State state{};
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_INPUT
     // The platform supplies the shared gyro controller only to the physical
     // profile that currently owns it. Polling that accumulator from every
     // profile would recenter it repeatedly and erase the owner's sample.
@@ -1063,7 +1065,7 @@ dkr::runtime::input::State dkr::runtime::input::poll_snapshot(
     bool include_keyboard, bool blocked, bool allow_quick_restart,
     bool global_shortcut_owner) {
     State state{};
-#if DKR_RUNTIME_HAS_RT64
+#if DKR_PLATFORM_HAS_INPUT
     const std::optional<GyroSample> gyro = owns_gyro_accumulator(
                                                gyro_controller != nullptr)
         ? PollSnapshotGyro(player, gyro_controller)
