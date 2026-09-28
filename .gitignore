@@ -105,8 +105,6 @@ secrets*.json
 token*.json
 
 # DKR decomp/recomp working data generated locally
-runtime-recomp/RecompiledFuncs/
-runtime-recomp/RecompiledFuncs-v80/
 runtime-recomp/RecompiledPatches/
 build/runtime-tools/
 runtime-recomp/build/

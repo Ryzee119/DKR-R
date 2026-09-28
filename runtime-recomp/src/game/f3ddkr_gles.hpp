@@ -400,6 +400,8 @@ public:
     bool is_batch_empty() const { return batched_vertices_.empty(); }
     size_t batched_vertex_count() const { return batched_vertices_.size(); }
     size_t texture_cache_size() const { return texture_cache_.size(); }
+    uint64_t tex_hits() const { return tex_hits_; }
+    uint64_t tex_misses() const { return tex_misses_; }
 
 private:
     struct DLEntry {

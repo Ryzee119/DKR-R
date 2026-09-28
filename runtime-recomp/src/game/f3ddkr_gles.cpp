@@ -2660,7 +2660,6 @@ void F3DDKRGLESBridge::execute_command(uint32_t w0, uint32_t w1, const uint8_t* 
             break;
         case kLoadTileOpcode:
             handle_load_tile(w0, w1, rdram);
-            handle_unexpected_opcode(opcode, cmd_address);
             break;
         case kDisplayListOpcode: {
             if (dl_recursion_depth_ >= 8) {
@@ -2703,6 +2702,24 @@ void F3DDKRGLESBridge::execute_command(uint32_t w0, uint32_t w1, const uint8_t* 
         case kClearGeometryModeOpcode:
             handle_geometry_mode(opcode, w1);
             break;
+        case 0xD9: { // G_GEOMETRYMODE (F3DEX / F3DEX2)
+            const uint32_t prev_geom = state_.geometry_mode;
+            const uint32_t clear_mask = (w0 & 0x00FFFFFFU);
+            if (clear_mask != 0U) {
+                state_.geometry_mode &= clear_mask;
+            }
+            state_.geometry_mode |= w1;
+            const bool prev_fog = (prev_geom & 0x00010000U) != 0;
+            const bool new_fog = (state_.geometry_mode & 0x00010000U) != 0;
+            if (prev_fog != new_fog) {
+                if (!batched_vertices_.empty()) {
+                    flush_batch(FlushReason::Fog);
+                }
+                state_.dirty_uniforms |= DIRTY_UNIFORM_FOG_EN;
+                state_.uniforms_dirty = true;
+            }
+            break;
+        }
         case kSetScissorOpcode:
             handle_set_scissor(w0, w1);
             break;
@@ -2745,6 +2762,7 @@ void F3DDKRGLESBridge::execute_command(uint32_t w0, uint32_t w1, const uint8_t* 
         case 0xB5: // G_LINE3D
         case 0xBD: // G_POPMTX
         case 0xBE: // G_CULLDL
+        case 0xD8: // G_POPMTX (F3DEX2)
         case 0xEA: // G_SETKEYGB
         case 0xEB: // G_SETKEYR
         case 0xEC: // G_SETCONVERT

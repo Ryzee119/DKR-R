@@ -284,7 +284,7 @@ int main(int argc, char* argv[]) {
 
         // Render States
         emit_cmd(0xEF000000U, 0x00000030U | 0x00000001U); // depth test on
-        emit_cmd(0xD9000000U, 0x00000400U); // cull back
+        emit_cmd(0xB7000000U, 0x00002000U); // G_SETGEOMETRYMODE: cull back (F3D)
         emit_cmd(0xFA000000U, 0xFFFFFFFFU); // prim color white
         emit_cmd(0xFB000000U, 0xFFFFFFFFU); // env color white
         emit_cmd(0xFC121824U, 0xFF33FFFFU); // combiner: modulate
