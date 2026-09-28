@@ -33,7 +33,7 @@ jobs:
 
       - name: Prepare pinned runtime dependencies
         run: |
-          python3 scripts/bootstrap_dependencies.py --only n64-modern-runtime --only gekkonet --only monocypher
+          python3 scripts/bootstrap_dependencies.py --only n64-modern-runtime --only gekkonet --only monocypher --only mbedtls
           bash scripts/apply-dependency-patches.sh
 
       - name: Cache aarch64 sysroot
